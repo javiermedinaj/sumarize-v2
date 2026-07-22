@@ -38,7 +38,7 @@ async function chat(
   user: string,
   opts: { temperature?: number; maxTokens?: number; json?: boolean } = {},
 ) {
-  const res = await client().chat.completions.create({
+  return chatWithRetry({
     model: model(),
     messages: [
       { role: "system", content: system },
@@ -48,7 +48,41 @@ async function chat(
     max_tokens: opts.maxTokens ?? 1500,
     response_format: opts.json ? { type: "json_object" } : undefined,
   });
-  return res.choices[0]?.message?.content ?? "";
+}
+
+// Retry with exponential backoff for transient errors (429, 5xx, network).
+// Reads `try again in Ns` from Groq's error message when available.
+async function chatWithRetry(
+  body: any,
+  attempt = 0,
+): Promise<string> {
+  const MAX_ATTEMPTS = 4;
+  try {
+    const res = await client().chat.completions.create(body);
+    return res.choices[0]?.message?.content ?? "";
+  } catch (err: any) {
+    if (attempt >= MAX_ATTEMPTS - 1) throw err;
+
+    const status = err?.status ?? err?.response?.status;
+    const message: string = err?.message ?? "";
+
+    // 429 (rate limit) or 5xx — retryable
+    const retryable = status === 429 || (status >= 500 && status < 600);
+    if (!retryable) throw err;
+
+    // Try to parse Groq's hint: "Please try again in 2s"
+    let waitMs = Math.min(1000 * 2 ** attempt, 8000);
+    const hint = message.match(/try again in (\d+(?:\.\d+)?)\s*s/i);
+    if (hint) {
+      waitMs = Math.max(waitMs, Math.ceil(parseFloat(hint[1]) * 1000) + 250);
+    }
+
+    console.warn(
+      `[groq] ${status ?? "error"} on attempt ${attempt + 1}, retrying in ${waitMs}ms`,
+    );
+    await new Promise((r) => setTimeout(r, waitMs));
+    return chatWithRetry(body, attempt + 1);
+  }
 }
 
 const SUMMARY_SYSTEM = `Eres un experto analista de contenido. Genera un resumen ejecutivo profesional en español, en markdown, con esta estructura EXACTA:
@@ -57,7 +91,8 @@ const SUMMARY_SYSTEM = `Eres un experto analista de contenido. Genera un resumen
 - 2-3 oraciones con la esencia.
 
 ## Puntos Clave
-- Lista numerada (7-8 puntos) cubriendo TODOS los temas mencionados.
+- Lista con viñetas (usando "-") de 7-8 puntos cubriendo TODOS los temas mencionados.
+- IMPORTANTE: NO numeres los puntos. Usa siempre "-".
 
 ## Insights Destacados
 - Análisis de ideas valiosas, conexiones e implicaciones.

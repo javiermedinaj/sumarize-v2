@@ -83,10 +83,37 @@ export async function POST(req: NextRequest) {
       ...stored,
     });
   } catch (err: any) {
-    console.error("[/api/process]", err);
+    // Log the real error for debugging (server logs only)
+    console.error("[/api/process]", err?.message ?? err);
+    if (err?.stack) console.error(err.stack);
+
+    // Map known errors to user-friendly Spanish messages
+    const message: string = err?.message ?? "";
+    const status = err?.status ?? err?.response?.status;
+
+    let userMessage = "No pudimos procesar el video. Intentá nuevamente en unos minutos.";
+    let httpStatus = 500;
+
+    if (status === 429 || /rate limit/i.test(message) || /TPM/i.test(message)) {
+      userMessage = "Estamos procesando muchas solicitudes en este momento. Esperá unos segundos y volvé a intentar.";
+      httpStatus = 503;
+    } else if (/transcript/i.test(message) || /subtitle/i.test(message)) {
+      userMessage = "No encontramos subtítulos disponibles para este video. Probá con otro que tenga subtítulos activados.";
+      httpStatus = 404;
+    } else if (/invalid youtube url/i.test(message)) {
+      userMessage = "La URL del video no es válida. Asegurate de que sea un enlace de YouTube.";
+      httpStatus = 400;
+    } else if (/GROQ_API_KEY/i.test(message)) {
+      userMessage = "El servicio de IA no está configurado. Contactá al administrador.";
+      httpStatus = 503;
+    } else if (/EROFS|read-only/i.test(message)) {
+      userMessage = "No pudimos guardar el resultado. Intentá nuevamente.";
+      httpStatus = 500;
+    }
+
     return NextResponse.json(
-      { error: err?.message ?? "Internal error" },
-      { status: 500 },
+      { error: userMessage },
+      { status: httpStatus },
     );
   }
 }

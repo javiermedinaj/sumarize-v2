@@ -118,8 +118,9 @@ function renderMarkdown(content: string) {
     } else if (t.startsWith("- ") || t.startsWith("* ")) {
       bullets.push(t.substring(2).trim());
     } else if (/^\d+\.\s/.test(t)) {
-      flush();
-      numbered.push(t.replace(/^\d+\.\s*/, "").trim());
+      // If the line already starts with a number, treat it as a bullet
+      // (avoid double numbering when the LLM adds its own numbering).
+      bullets.push(t.replace(/^\d+\.\s*/, "").trim());
     } else {
       flush();
       out.push(
