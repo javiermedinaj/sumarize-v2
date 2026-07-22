@@ -1,7 +1,27 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, mkdirSync, accessSync, constants } from "node:fs";
 import path from "node:path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+// Resolve a writable directory. Priority:
+//   1. DATA_DIR env var (if set, use it directly — useful for Render Disks)
+//   2. cwd/data (local dev — keeps files inside the repo)
+//   3. /tmp/data (serverless / read-only filesystems like Render)
+//
+// We probe writability at module load and fall back gracefully.
+function resolveDataDir(): string {
+  if (process.env.DATA_DIR && process.env.DATA_DIR.trim().length > 0) {
+    return process.env.DATA_DIR;
+  }
+  const local = path.join(process.cwd(), "data");
+  try {
+    mkdirSync(local, { recursive: true });
+    accessSync(local, constants.W_OK);
+    return local;
+  } catch {
+    return "/tmp/data";
+  }
+}
+
+const DATA_DIR = resolveDataDir();
 
 export type StoredAnalysis = {
   videoId: string;
